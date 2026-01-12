@@ -1,8 +1,20 @@
 'use client';
 
-// OTP Storage (will be replaced with EmailJS in Phase 2)
+import emailjs from '@emailjs/browser';
+
+// OTP Storage
 const OTP_STORAGE_KEY = 'expensewise_otp';
 const OTP_EXPIRY_MINUTES = 5;
+
+// Initialize EmailJS once
+let initialized = false;
+
+const initEmailJS = () => {
+  if (!initialized && typeof window !== 'undefined') {
+    emailjs.init(process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY);
+    initialized = true;
+  }
+};
 
 // Generate a random 6-digit OTP
 export const generateOTP = () => {
@@ -44,23 +56,19 @@ export const verifyOTP = (email, enteredOTP) => {
     
     const otpData = JSON.parse(stored);
     
-    // Check if email matches
     if (otpData.email !== email.toLowerCase().trim()) {
       return { success: false, error: 'Invalid OTP. Please try again.' };
     }
     
-    // Check if OTP expired
     if (Date.now() > otpData.expiresAt) {
       sessionStorage.removeItem(OTP_STORAGE_KEY);
       return { success: false, error: 'OTP expired. Please request a new one.' };
     }
     
-    // Check if OTP matches
     if (otpData.otp !== enteredOTP) {
       return { success: false, error: 'Invalid OTP. Please try again.' };
     }
     
-    // OTP is valid - clear it
     sessionStorage.removeItem(OTP_STORAGE_KEY);
     return { success: true };
     
@@ -86,52 +94,60 @@ export const getOTPRemainingTime = () => {
     
     const otpData = JSON.parse(stored);
     const remaining = Math.max(0, otpData.expiresAt - Date.now());
-    return Math.ceil(remaining / 1000); // Return seconds
+    return Math.ceil(remaining / 1000);
   } catch {
     return 0;
   }
 };
 
-// Send OTP (Currently just generates and stores - will integrate EmailJS in Phase 2)
+// Send OTP via EmailJS
 export const sendOTP = async (email, userName = '') => {
+  initEmailJS();
+  
   const otp = generateOTP();
   
-  // Store the OTP
-  const stored = storeOTP(email, otp);
-  
-  if (!stored) {
+  try {
+    // Send email via EmailJS
+    await emailjs.send(
+      process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID,
+      process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_OTP,
+      {
+        to_email: email,
+        to_name: userName || email.split('@')[0],
+        otp_code: otp,
+        expiry_time: '5 minutes',
+      },
+      process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY
+    );
+    
+    // Store OTP for verification
+    const stored = storeOTP(email, otp);
+    
+    if (!stored) {
+      return { 
+        success: false, 
+        error: 'Failed to process OTP. Please try again.' 
+      };
+    }
+    
+    console.log('✅ OTP sent successfully to:', email);
+    
+    return { 
+      success: true, 
+      message: `OTP sent to ${email}`,
+    };
+    
+  } catch (error) {
+    console.error('❌ EmailJS Error:', error);
     return { 
       success: false, 
-      error: 'Failed to generate OTP. Please try again.' 
+      error: error.text || 'Failed to send OTP. Please try again.',
     };
   }
-  
-  // For development: Log OTP to console (remove in production)
-  console.log('========================================');
-  console.log(`📧 OTP for ${email}: ${otp}`);
-  console.log(`⏰ Valid for ${OTP_EXPIRY_MINUTES} minutes`);
-  console.log('========================================');
-  
-  // TODO: Phase 2 - Send via EmailJS
-  // await emailjs.send(serviceId, templateId, {
-  //   to_email: email,
-  //   to_name: userName,
-  //   otp_code: otp,
-  // });
-  
-  return { 
-    success: true, 
-    message: `OTP sent to ${email}`,
-    // For development only - remove in production
-    devOTP: process.env.NODE_ENV === 'development' ? otp : undefined,
-  };
 };
 
 // Resend OTP
 export const resendOTP = async (email, userName = '') => {
-  // Clear existing OTP
   clearOTP();
-  
-  // Send new OTP
   return sendOTP(email, userName);
 };
